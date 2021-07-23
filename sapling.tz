@@ -1,0 +1,16 @@
+{ parameter (list (pair (sapling_transaction 8) (option key_hash))) ;
+  storage (pair int (sapling_state 8)) ;
+  code { UNPAIR ;
+         ITER { SWAP ;
+                PAIR ;
+                DUP ;
+                CAR ;
+                CDR ;
+                SWAP ;
+                CDR ;
+                CAR ;
+                SAPLING_VERIFY_UPDATE ;
+                IF_NONE { PUSH string "failed" ; FAILWITH } {} } ;
+         NIL operation ;
+         PAIR } }
+
