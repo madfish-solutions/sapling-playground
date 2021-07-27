@@ -18,28 +18,6 @@ function fa12_transfer_entrypoint(const token_address : address) : contract(tran
   | None -> (failwith("fa12-transfer-ep-not-found") : contract(transfer_params))
   end
 
-// function boo(const param : parameter; var s : storage): return is block {
-//   var operations : list(operation) := list[];
-
-//   const b : bool = True;
-//   const i : int = case b of
-//     | True -> block {
-//         skip
-//         // operations := list[];
-//       } with -5
-//     | False -> 10
-//   end;
-
-//   const j : int = 0;
-//   case b of
-//     | True -> block {
-//         operations := list[];
-//       } with unit;
-//     | False -> unit
-//   end;
-
-// } with (operations, s)
-
 function main(const param : parameter; var s : storage) : return is 
   block {
     var operations : list(operation) := list[];
