@@ -1,48 +1,84 @@
 #!/usr/bin/fish
+# alias mockup-client='/home/julian/Projects/tezos-v9/tezos-client --mode mockup --base-dir /tmp/mockup'
 alias mockup-client='tezos-client --mode mockup --base-dir /tmp/mockup'
 
+function contract_address
+    mockup-client show known contract $argv
+end
+
+set first_bootstrap_addr "tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"
+
+set token_storage_ligo "record [
+  total_supply = 100000000n;
+  ledger = big_map[
+    (\"$first_bootstrap_addr\" : address) -> record[
+        balance = 30000000n;
+        allowances = (map [] : map(address, nat)); 
+    ];
+  ];
+]"
+
+set token_storage_mich (ligo compile-storage ./contracts/main/TokenFA12.ligo main (echo $token_storage_ligo | string collect))
+
+mockup-client originate contract token transferring 1 from bootstrap1 \
+                        running ./contracts/compiled/TokenFA12.tz \
+                        --burn-cap 10 --force \
+                        --init (echo $token_storage_mich)
+
+set token_address (contract_address token | string collect)
+mockup-client bake for bootstrap1
+sleep 1
+
 # originate the contract with its initial empty sapling storage,
-# bake a block to include it.
 # { } represents an empty Sapling state.
-# "Pair 0 {}" represents empty contract storage of type (int * sapling_state(8))
-mockup-client originate contract shielded-tez transferring 0 from bootstrap1 running sapling.tz --init 'Pair 0 { }' --burn-cap 3
+mockup-client originate contract sapling_token transferring 0 from bootstrap1 running ./contracts/compiled/SaplingFA12.tz --init "Pair (Pair 0 { }) \"$token_address\"" --burn-cap 3 --force
+mockup-client bake for bootstrap1
+sleep 1
+
+set sapling_token_address (contract_address sapling_token | string collect)
+
+
+mockup-client call token from $first_bootstrap_addr \
+    --burn-cap 1 \
+    --entrypoint "approve" --arg "Pair \"$sapling_token_address\" 100000000"
+
 mockup-client bake for bootstrap1
 
 # as usual you can check the mockup-client manual
 # mockup-client sapling man
 
-# generate two shielded keys for Alice and Bob and use them for the shielded-tez contract
+# generate two shielded keys for Alice and Bob and use them for the sapling_token contract
 # the memo size has to be indicated
 mockup-client sapling gen key alice
-mockup-client sapling use key alice for contract shielded-tez --memo-size 8
+mockup-client sapling use key alice for contract sapling_token --memo-size 8
 mockup-client sapling gen key bob
-mockup-client sapling use key bob for contract shielded-tez --memo-size 8
+mockup-client sapling use key bob for contract sapling_token --memo-size 8
 
-# generate an address for Alice to receive shielded tokens.
+# manually generate an address for Alice to receive shielded tokens.
 # mockup-client sapling gen address alice
 # replace it with output of the previous command
-# zet14RYqSsKF4vbmHENFXfBHoXJjYDLmnfib1r372JARN3A1rSvVR95wMow8KRuKCueqA # Alice's address
+# zet13oMkE5SXGaMtEni351y2GmsUCgPLkgyXmTWwA3rJPNeXhZedn6U4tsQqnPZjoUuDf # Alice's address
 
 
-# shield 10 tez from bootstrap1 to alice
-mockup-client sapling shield 10 from bootstrap1 to zet14RYqSsKF4vbmHENFXfBHoXJjYDLmnfib1r372JARN3A1rSvVR95wMow8KRuKCueqA using shielded-tez --burn-cap 2 
+# shield 10 tokens from bootstrap1 to alice
+mockup-client sapling shield 10 from bootstrap1 to zet13oMkE5SXGaMtEni351y2GmsUCgPLkgyXmTWwA3rJPNeXhZedn6U4tsQqnPZjoUuDf using sapling_token --burn-cap 2 
 mockup-client bake for bootstrap1
-mockup-client sapling get balance for alice in contract shielded-tez
+mockup-client sapling get balance for alice in contract sapling_token
 
 # generate an address for Bob to receive shielded tokens.
 # mockup-client sapling gen address bob
 # replace it with output of the previous command
-# zet142gVgegLFhnGb3KQUSuN7zNuaaEFucRtmDM2wp4jb8WRHeMkc1P3k4ZTjcWPtX9Bm # Bob's address
+# zet149gV9CfoHByG2yMtiyWB2prfDW1puBy2Z7L9uPs7yoSrEyBufTDFYF5cUwN36eHbQ # Bob's address
 
+# ---------------------
 # forge a shielded transaction from alice to bob that is saved to a file
-mockup-client sapling forge transaction 10 from alice to zet142gVgegLFhnGb3KQUSuN7zNuaaEFucRtmDM2wp4jb8WRHeMkc1P3k4ZTjcWPtX9Bm using shielded-tez
+mockup-client sapling forge transaction 10 from alice to zet149gV9CfoHByG2yMtiyWB2prfDW1puBy2Z7L9uPs7yoSrEyBufTDFYF5cUwN36eHbQ using sapling_token
 
-# submit the shielded transaction from any transparent account
-mockup-client sapling submit sapling_transaction from bootstrap2 using shielded-tez --burn-cap 1
+# # submit the shielded transaction from any transparent account
+mockup-client sapling submit sapling_transaction from bootstrap2 using sapling_token --burn-cap 1
 mockup-client bake for bootstrap1
-mockup-client sapling get balance for bob in contract shielded-tez
+mockup-client sapling get balance for bob in contract sapling_token
 
-# unshield from bob to any transparent account
-mockup-client sapling unshield 10 from bob to bootstrap1 using shielded-tez --burn-cap 1
-
+# # unshield from bob to any transparent account
+mockup-client sapling unshield 5 from bob to bootstrap1 using sapling_token --burn-cap 1
 mockup-client bake for bootstrap1
