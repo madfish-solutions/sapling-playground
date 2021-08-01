@@ -6,6 +6,11 @@ function contract_address
     mockup-client show known contract $argv
 end
 
+# gets alias sapling key address. Applies `sed` to get the third of the output
+function gen_sapling_address
+  mockup-client sapling gen address $argv | sed -n "2,2p"
+end
+
 set first_bootstrap_addr "tz1KqTpEZ7Yob7QbPE4Hy4Wo8fHG8LhKxZSx"
 
 set token_storage_ligo "record [
@@ -49,19 +54,22 @@ mockup-client bake for bootstrap1
 
 # generate two shielded keys for Alice and Bob and use them for the sapling_token contract
 # the memo size has to be indicated
-mockup-client sapling gen key alice
+mockup-client sapling gen key alice -f --unencrypted
 mockup-client sapling use key alice for contract sapling_token --memo-size 8
-mockup-client sapling gen key bob
+mockup-client sapling gen key bob -f --unencrypted
 mockup-client sapling use key bob for contract sapling_token --memo-size 8
 
 # manually generate an address for Alice to receive shielded tokens.
 # mockup-client sapling gen address alice
 # replace it with output of the previous command
 # zet13oMkE5SXGaMtEni351y2GmsUCgPLkgyXmTWwA3rJPNeXhZedn6U4tsQqnPZjoUuDf # Alice's address
+set alice_sapling_address (gen_sapling_address alice)
+set bob_sapling_address (gen_sapling_address bob)
+
 
 
 # shield 10 tokens from bootstrap1 to alice
-mockup-client sapling shield 10 from bootstrap1 to zet13oMkE5SXGaMtEni351y2GmsUCgPLkgyXmTWwA3rJPNeXhZedn6U4tsQqnPZjoUuDf using sapling_token --burn-cap 2 
+mockup-client sapling shield 10 from bootstrap1 to $alice_sapling_address using sapling_token --burn-cap 2 
 mockup-client bake for bootstrap1
 mockup-client sapling get balance for alice in contract sapling_token
 
@@ -72,10 +80,11 @@ mockup-client sapling get balance for alice in contract sapling_token
 
 # ---------------------
 # forge a shielded transaction from alice to bob that is saved to a file
-mockup-client sapling forge transaction 10 from alice to zet149gV9CfoHByG2yMtiyWB2prfDW1puBy2Z7L9uPs7yoSrEyBufTDFYF5cUwN36eHbQ using sapling_token
+mockup-client sapling forge transaction 10 from alice to $bob_sapling_address using sapling_token
 
 # # submit the shielded transaction from any transparent account
 mockup-client sapling submit sapling_transaction from bootstrap2 using sapling_token --burn-cap 1
+sleep 1
 mockup-client bake for bootstrap1
 mockup-client sapling get balance for bob in contract sapling_token
 
