@@ -1,6 +1,10 @@
-#!/usr/bin/fish
+#!/opt/homebrew/bin/fish
 # alias mockup-client='/home/julian/Projects/tezos-v9/tezos-client --mode mockup --base-dir /tmp/mockup'
 alias mockup-client='tezos-client --mode mockup --base-dir /tmp/mockup'
+
+function chosen_ligo
+    docker run -v $PWD:$PWD --rm -i ligolang/ligo:0.45.0 $argv --protocol hangzhou
+end
 
 function contract_address
     mockup-client show known contract $argv
@@ -23,7 +27,8 @@ set token_storage_ligo "record [
   ];
 ]"
 
-set token_storage_mich (ligo compile-storage ./contracts/main/TokenFA12.ligo main (echo $token_storage_ligo | string collect))
+set token_storage_mich (chosen_ligo compile storage $PWD/contracts/main/TokenFA12.ligo (echo $token_storage_ligo | string collect))
+exit 0
 
 mockup-client originate contract token transferring 1 from bootstrap1 \
                         running ./contracts/compiled/TokenFA12.tz \
@@ -33,6 +38,8 @@ mockup-client originate contract token transferring 1 from bootstrap1 \
 set token_address (contract_address token | string collect)
 mockup-client bake for bootstrap1
 sleep 1
+
+exit 0
 
 # originate the contract with its initial empty sapling storage,
 # { } represents an empty Sapling state.
