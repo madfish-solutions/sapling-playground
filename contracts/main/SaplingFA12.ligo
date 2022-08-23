@@ -5,11 +5,6 @@ type sapling_element is (int * sapling_state(8));
 
 type sapling_params is list((sapling_transaction(8) * option(key_hash)));
 
-type shoulder is 
-| OnlyA
-| OnlyB
-| Proportional
-
 type storage is record [
   ledger: sapling_element;
   token_a_address: address;
@@ -17,12 +12,13 @@ type storage is record [
   token_a_pool: nat;
   token_b_pool: nat;
   total_supply: nat;
-  weight : shoulder;
+  weight : nat;
+  last_sender : address;
 ];
 
 
 type parameter is 
-| Prepare of shoulder
+| Prepare of nat
 | Default of sapling_params
 
 type return is (list(operation) * storage)
@@ -33,8 +29,27 @@ function fa12_transfer_entrypoint(const token_address : address) : contract(tran
   | None -> (failwith("fa12-transfer-ep-not-found") : contract(transfer_params))
   end
 
-function prepare(const prep : shoulder; var s : storage) : return is block {
+function ceil_div(
+  const numerator       : nat;
+  const denominator     : nat)
+                        : nat is
+  case ediv(numerator, denominator) of [
+  | Some(result) ->
+      if result.1 > 0n
+      then result.0 + 1n
+      else result.0
+  | None         -> failwith("CEIL_DIV by 0")
+  ]
+
+[@inline] function require(
+  const param           : bool;
+  const error           : string)
+                        : unit is
+  if param then unit else failwith(error);
+
+function prepare(const prep : nat; var s : storage) : return is block {
   s.weight := prep;
+  s.last_sender := Tezos.sender;
 } with ((nil : list(operation)), s)
 
 function swap(
@@ -69,25 +84,27 @@ block {
               var token_a_divested : nat := s.token_a_pool * shares / s.total_supply;
               var token_b_divested : nat := s.token_b_pool * shares / s.total_supply;
 
-              case s.weight of [
-                | OnlyA -> {
-                  const (out, token_b_pool, token_a_pool) = swap(token_b_divested, s.token_b_pool, s.token_a_pool);
-                  token_a_divested := token_a_divested + out;
-                  token_b_divested := 0n;
+              require(
+                s.weight = 0n or s.weight = 500_000n or s.weight = 1_000_000n,
+                "INVALID_WEIGHT"
+              );
+              require(Tezos.sender = s.last_sender, "WRONG_SENDER");
+              
+              if s.weight = 0n then { // only token A
+                const (out, token_b_pool, token_a_pool) = swap(token_b_divested, s.token_b_pool, s.token_a_pool);
+                token_a_divested := token_a_divested + out;
+                token_b_divested := 0n;
 
-                  s.token_a_pool := token_a_pool;
-                  s.token_b_pool := token_b_pool;
-                }
-                | OnlyB -> {
-                  const (out, token_a_pool, token_b_pool) = swap(token_a_divested, s.token_a_pool, s.token_b_pool);
-                  token_a_divested := 0n;
-                  token_b_divested := token_b_divested + out;
+                s.token_a_pool := token_a_pool;
+                s.token_b_pool := token_b_pool;
+              } else if s.weight = 1_000_000n then { // only token B
+                const (out, token_a_pool, token_b_pool) = swap(token_a_divested, s.token_a_pool, s.token_b_pool);
+                token_a_divested := 0n;
+                token_b_divested := token_b_divested + out;
 
-                  s.token_a_pool := token_a_pool;
-                  s.token_b_pool := token_b_pool;
-                }
-                | _ -> skip
-              ];
+                s.token_a_pool := token_a_pool;
+                s.token_b_pool := token_b_pool;
+              } else skip; // according to current pools
 
               s.total_supply := abs(s.total_supply - shares);
               s.token_a_pool := abs(s.token_a_pool - token_a_divested);
@@ -117,20 +134,52 @@ block {
               } else skip;
 
             } else {
-              const shoulder_amt = abs(value / 2);
-              const tx_a : operation = Tezos.transaction((Tezos.sender, (Tezos.self_address, shoulder_amt)),
-                0mutez,
-                fa12_transfer_entrypoint(s.token_a_address)
-              );
-              const tx_b : operation = Tezos.transaction((Tezos.sender, (Tezos.self_address, shoulder_amt)),
-                0mutez,
-                fa12_transfer_entrypoint(s.token_b_address)
-              );
-              s.total_supply := s.total_supply + abs(value);
-              s.token_a_pool := s.token_a_pool + shoulder_amt;
-              s.token_b_pool := s.token_b_pool + shoulder_amt;
-              operations := tx_a # operations;
-              operations := tx_b # operations;
+              const req_shares = abs(value);
+
+              var token_a_req := 0n;
+              var token_b_req := 0n;
+
+              if s.total_supply =/= 0n then {
+                require(
+                  s.weight = 0n or s.weight = 500_000n or s.weight = 1_000_000n,
+                  "INVALID_WEIGHT"
+                )
+              } else skip;
+
+              require(Tezos.sender = s.last_sender, "WRONG_SENDER");
+
+              if s.weight = 500_000n then {
+                token_a_req := ceil_div(req_shares * s.token_a_pool, s.total_supply);
+                token_b_req := ceil_div(req_shares * s.token_b_pool, s.total_supply);
+              } else {
+                const total_supply_sq = s.total_supply * s.total_supply;
+                const req_shares_sq = req_shares * req_shares;
+                if s.weight = 0n then { // only token A
+                  token_a_req := (1997n * s.token_a_pool * s.total_supply * req_shares + 1996n * s.token_a_pool * req_shares_sq) / (1000n * total_supply_sq + 999n * s.total_supply * req_shares);
+                } else if s.weight = 1_000_000n then { // only token B
+                  token_b_req := (1997n * s.token_b_pool * s.total_supply * req_shares + 1996n * s.token_b_pool * req_shares_sq) / (1000n * total_supply_sq + 999n * s.total_supply * req_shares);
+                } else skip;
+              };
+
+              s.total_supply := s.total_supply + req_shares;
+              s.token_a_pool := s.token_a_pool + token_a_req;
+              s.token_b_pool := s.token_b_pool + token_b_req;
+              
+              if token_a_req > 0n then {
+                const tx : operation = Tezos.transaction((Tezos.sender, (Tezos.self_address, token_a_req)),
+                  0mutez,
+                  fa12_transfer_entrypoint(s.token_a_address)
+                );
+                operations := tx # operations;
+              } else skip;
+
+              if token_b_req > 0n then {
+                const tx : operation = Tezos.transaction((Tezos.sender, (Tezos.self_address, token_b_req)),
+                  0mutez,
+                  fa12_transfer_entrypoint(s.token_b_address)
+                );
+                operations := tx # operations;
+              } else skip;
             }
           };
           (* update ledger state *)
