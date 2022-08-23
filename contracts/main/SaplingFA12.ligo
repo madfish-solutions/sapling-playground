@@ -5,6 +5,8 @@ type sapling_element is (int * sapling_state(8));
 
 type sapling_params is list((sapling_transaction(8) * option(key_hash)));
 
+// const PRECISION : nat = 1_000_000n;
+
 type storage is record [
   ledger: sapling_element;
   token_a_address: address;
@@ -15,7 +17,6 @@ type storage is record [
   weight : nat;
   last_sender : address;
 ];
-
 
 type parameter is 
 | Prepare of nat
@@ -143,23 +144,25 @@ block {
                 require(
                   s.weight = 0n or s.weight = 500_000n or s.weight = 1_000_000n,
                   "INVALID_WEIGHT"
-                )
-              } else skip;
+                );
+                if s.weight = 500_000n then {
+                  token_a_req := ceil_div(req_shares * s.token_a_pool, s.total_supply);
+                  token_b_req := ceil_div(req_shares * s.token_b_pool, s.total_supply);
+                } else {
+                  const total_supply_sq = s.total_supply * s.total_supply;
+                  const req_shares_sq = req_shares * req_shares;
+                  if s.weight = 0n then { // only token A
+                    token_a_req := (1997n * s.token_a_pool * s.total_supply * req_shares + 1996n * s.token_a_pool * req_shares_sq) / (1000n * total_supply_sq + 999n * s.total_supply * req_shares);
+                  } else if s.weight = 1_000_000n then { // only token B
+                    token_b_req := (1997n * s.token_b_pool * s.total_supply * req_shares + 1996n * s.token_b_pool * req_shares_sq) / (1000n * total_supply_sq + 999n * s.total_supply * req_shares);
+                  } else skip;
+                };
+              } else {
+                token_b_req := req_shares * s.weight / 1_000_000n;
+                token_a_req := abs(req_shares - token_b_req);
+              };
 
               require(Tezos.sender = s.last_sender, "WRONG_SENDER");
-
-              if s.weight = 500_000n then {
-                token_a_req := ceil_div(req_shares * s.token_a_pool, s.total_supply);
-                token_b_req := ceil_div(req_shares * s.token_b_pool, s.total_supply);
-              } else {
-                const total_supply_sq = s.total_supply * s.total_supply;
-                const req_shares_sq = req_shares * req_shares;
-                if s.weight = 0n then { // only token A
-                  token_a_req := (1997n * s.token_a_pool * s.total_supply * req_shares + 1996n * s.token_a_pool * req_shares_sq) / (1000n * total_supply_sq + 999n * s.total_supply * req_shares);
-                } else if s.weight = 1_000_000n then { // only token B
-                  token_b_req := (1997n * s.token_b_pool * s.total_supply * req_shares + 1996n * s.token_b_pool * req_shares_sq) / (1000n * total_supply_sq + 999n * s.total_supply * req_shares);
-                } else skip;
-              };
 
               s.total_supply := s.total_supply + req_shares;
               s.token_a_pool := s.token_a_pool + token_a_req;
