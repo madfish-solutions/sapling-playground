@@ -1,11 +1,11 @@
 #include "../partial/FA12Types.ligo"
 #include "../partial/FA12Methods.ligo"
 
+const precision : nat = 1_000_000n;
+
 type sapling_element is (int * sapling_state(8));
 
 type sapling_params is list((sapling_transaction(8) * option(key_hash)));
-
-// const PRECISION : nat = 1_000_000n;
 
 type storage is record [
   ledger: sapling_element;
@@ -158,8 +158,13 @@ block {
                   } else skip;
                 };
               } else {
-                token_b_req := req_shares * s.weight / 1_000_000n;
-                token_a_req := abs(req_shares - token_b_req);
+                if s.weight >= 1_000_000n then {
+                  token_a_req := req_shares;
+                  token_b_req := req_shares * s.weight / 1_000_000n;
+                } else {
+                  token_a_req := req_shares * s.weight / 1_000_000n;
+                  token_b_req := req_shares;
+                }
               };
 
               require(Tezos.sender = s.last_sender, "WRONG_SENDER");
