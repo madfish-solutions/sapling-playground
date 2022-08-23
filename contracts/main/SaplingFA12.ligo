@@ -5,6 +5,11 @@ type sapling_element is (int * sapling_state(8));
 
 type sapling_params is list((sapling_transaction(8) * option(key_hash)));
 
+type shoulder is 
+| OnlyA
+| OnlyB
+| Proportional
+
 type storage is record [
   ledger: sapling_element;
   token_a_address: address;
@@ -12,11 +17,12 @@ type storage is record [
   token_a_pool: nat;
   token_b_pool: nat;
   total_supply: nat;
-  proportion : nat;
+  weight : shoulder;
 ];
 
+
 type parameter is 
-| Prepare of nat
+| Prepare of shoulder
 | Default of sapling_params
 
 type return is (list(operation) * storage)
@@ -27,22 +33,26 @@ function fa12_transfer_entrypoint(const token_address : address) : contract(tran
   | None -> (failwith("fa12-transfer-ep-not-found") : contract(transfer_params))
   end
 
-function prepare(const prep : nat; var s : storage) : return is block {
-  s.proportion := prep;
+function prepare(const prep : shoulder; var s : storage) : return is block {
+  s.weight := prep;
 } with ((nil : list(operation)), s)
 
-function swap(var s : storage) : (nat * nat * storage) is block {
-    const from_in_with_fee : nat = tmp.amount_in * 997n;
-    const numerator : nat = from_in_with_fee * swap.to_.pool;
-    const denominator : nat = swap.from_.pool * 1000n + from_in_with_fee;
+function swap(
+    const amount_in : nat;
+    var from_pool : nat;
+    var to_pool : nat
+) : (nat * nat * nat) is block {
+    const from_in_with_fee : nat = amount_in * 997n;
+    const numerator : nat = from_in_with_fee * to_pool;
+    const denominator : nat = from_pool * 1000n + from_in_with_fee;
 
     (* calculate swapped token amount *)
     const out : nat = numerator / denominator;
 
     (* update pools amounts *)
-    swap.to_.pool := abs(swap.to_.pool - out);
-    swap.from_.pool := swap.from_.pool + tmp.amount_in;
-}
+    to_pool := abs(to_pool - out);
+    from_pool := from_pool + amount_in;
+} with (out, from_pool, to_pool)
 
 function handle_sapling(const sp : sapling_params; var s : storage ) : return is 
 block {
@@ -55,20 +65,31 @@ block {
             skip (* anonymous transfer case *)
           else {
             if value > 0 then {
-              // HACK use amount to simulate proportioning of the shoulders to extract
-              // Resolution is 1000mutez. Examples:
-              // 0mutez means take out 100.0% of token_a and 0% of token b.
-              // 500 mutez means 1:1 token_a to token b
-              // 750 mutez takes 75% of token_a and 25% of token b
-              const shares_to_divest = abs(value) * 997n / 1000n;
+              const shares = abs(value);
+              var token_a_divested : nat := s.token_a_pool * shares / s.total_supply;
+              var token_b_divested : nat := s.token_b_pool * shares / s.total_supply;
 
-              const a_shares : nat = shares_to_divest * s.proportion / 1000n;
-              const b_shares : nat = abs(shares_to_divest - a_shares);
+              case s.weight of [
+                | OnlyA -> {
+                  const (out, token_b_pool, token_a_pool) = swap(token_b_divested, s.token_b_pool, s.token_a_pool);
+                  token_a_divested := token_a_divested + out;
+                  token_b_divested := 0n;
 
-              const token_a_divested : nat = s.token_a_pool * a_shares / s.total_supply;
-              const token_b_divested : nat = s.token_b_pool * b_shares / s.total_supply;
+                  s.token_a_pool := token_a_pool;
+                  s.token_b_pool := token_b_pool;
+                }
+                | OnlyB -> {
+                  const (out, token_a_pool, token_b_pool) = swap(token_a_divested, s.token_a_pool, s.token_b_pool);
+                  token_a_divested := 0n;
+                  token_b_divested := token_b_divested + out;
 
-              s.total_supply := abs(s.total_supply - value);
+                  s.token_a_pool := token_a_pool;
+                  s.token_b_pool := token_b_pool;
+                }
+                | _ -> skip
+              ];
+
+              s.total_supply := abs(s.total_supply - shares);
               s.token_a_pool := abs(s.token_a_pool - token_a_divested);
               s.token_b_pool := abs(s.token_b_pool - token_b_divested);
 
@@ -76,16 +97,25 @@ block {
                 | Some(hash) -> Tezos.address(Tezos.implicit_account(hash))
                 | None -> (failwith("No receiver provided") : address)
               end;
-              const tx_a : operation = Tezos.transaction((Tezos.self_address, (receiver, token_a_divested)),
-                0mutez,
-                fa12_transfer_entrypoint(s.token_a_address)
-              );
-              const tx_b : operation = Tezos.transaction((Tezos.self_address, (receiver, token_b_divested)),
-                0mutez,
-                fa12_transfer_entrypoint(s.token_b_address)
-              );
-              operations := tx_a # operations;
-              operations := tx_b # operations;
+              
+              if token_a_divested > 0n then {
+                const tx : operation = Tezos.transaction(
+                  (Tezos.self_address, (receiver, token_a_divested)),
+                  0mutez,
+                  fa12_transfer_entrypoint(s.token_a_address)
+                );
+                operations := tx # operations;
+              } else skip;
+
+              if token_b_divested > 0n then {
+                const tx : operation = Tezos.transaction(
+                  (Tezos.self_address, (receiver, token_b_divested)),
+                  0mutez,
+                  fa12_transfer_entrypoint(s.token_b_address)
+                );
+                operations := tx # operations;
+              } else skip;
+
             } else {
               const shoulder_amt = abs(value / 2);
               const tx_a : operation = Tezos.transaction((Tezos.sender, (Tezos.self_address, shoulder_amt)),
