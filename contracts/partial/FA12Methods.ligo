@@ -3,21 +3,21 @@
 (* Helper function to get account *)
 function get_account(const user : address; const s : token_storage) : account is
   block {
-    var acc : account := case s.ledger[user] of
+    var acc : account := case s.ledger[user] of [
     | None -> record [
         balance = 0n;
         allowances = (map [] : map(address, nat));
       ]
     | Some(v) -> v
-    end;
+    ];
   } with acc
 
 (* Helper function to get allowance for an account *)
 function get_account_allowance(const owner : account; const spender : address) : nat is
-  case owner.allowances[spender] of
+  case owner.allowances[spender] of [
   | Some(v) -> v
   | None -> 0n
-  end
+  ];
 
 (* Transfer token to another account *)
 function transfer(const src : address; const dst : address; const value : nat; var s : token_storage) : return is
@@ -38,8 +38,8 @@ function transfer(const src : address; const dst : address; const value : nat; v
       skip;
 
     (* Check this address can spend the tokens *)
-    if src =/= Tezos.sender then block {
-      const sender_allowance : nat = get_account_allowance(sender_account, Tezos.sender);
+    if src =/= Tezos.get_sender() then block {
+      const sender_allowance : nat = get_account_allowance(sender_account, Tezos.get_sender());
 
       if sender_allowance < value then
         failwith("Token/not-enough-allowance")
@@ -47,7 +47,7 @@ function transfer(const src : address; const dst : address; const value : nat; v
         skip;
 
       (* Decrease sender allowance *)
-      sender_account.allowances[Tezos.sender] := abs(sender_allowance - value);
+      sender_account.allowances[Tezos.get_sender()] := abs(sender_allowance - value);
     } else
       skip;
 
@@ -70,19 +70,19 @@ function transfer(const src : address; const dst : address; const value : nat; v
 (* Approve an nat to be spent by another address in the name of the sender *)
 function approve(const spender : address; const value : nat; var s : token_storage) : return is
   block {
-    if spender = Tezos.sender then
+    if spender = Tezos.get_sender() then
       failwith("Token/self-to-self-approval")
     else
       skip;
 
     (* Create or get sender account *)
-    var sender_account : account := get_account(Tezos.sender, s);
+    var sender_account : account := get_account(Tezos.get_sender(), s);
 
     (* Set spender allowance *)
     sender_account.allowances[spender] := value;
 
     (* Update token_storage *)
-    s.ledger[Tezos.sender] := sender_account;
+    s.ledger[Tezos.get_sender()] := sender_account;
   } with ((nil : list(operation)), s)
 
 (* View function that forwards the balance of user to a contract *)

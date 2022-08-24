@@ -3,9 +3,9 @@
 
 const precision : nat = 1_000_000n;
 
-type sapling_element is (int * sapling_state(8));
+type sapling_element is sapling_state(8);
 
-type sapling_params is list((sapling_transaction(8) * option(key_hash)));
+type sapling_params is list(sapling_transaction(8));
 
 type storage is record [
   ledger: sapling_element;
@@ -25,10 +25,10 @@ type parameter is
 type return is (list(operation) * storage)
 
 function fa12_transfer_entrypoint(const token_address : address) : contract(transfer_params) is
-  case (Tezos.get_entrypoint_opt("%transfer", token_address) : option(contract(transfer_params))) of
+  case (Tezos.get_entrypoint_opt("%transfer", token_address) : option(contract(transfer_params))) of [
   | Some(contr) -> contr
   | None -> (failwith("fa12-transfer-ep-not-found") : contract(transfer_params))
-  end
+  ]
 
 function ceil_div(
   const numerator       : nat;
@@ -50,7 +50,7 @@ function ceil_div(
 
 function prepare(const prep : nat; var s : storage) : return is block {
   s.weight := prep;
-  s.last_sender := Tezos.sender;
+  s.last_sender := Tezos.get_sender();
 } with ((nil : list(operation)), s)
 
 function swap(
@@ -74,51 +74,62 @@ function handle_sapling(const sp : sapling_params; var s : storage ) : return is
 block {
   var operations := (list [] : list(operation));
   for el in list(sp) block {
-    case Tezos.sapling_verify_update(el.0, s.ledger.1) of
+    case Tezos.sapling_verify_update(el, s.ledger) of [
       | Some(output) -> block {
-          const value: int = output.0;
+          const bound_data : bytes = output.0;
+          const value: int = output.1.0;
           if value = 0 then
             skip (* anonymous transfer case *)
           else {
             if value > 0 then {
-              const shares = abs(value);
-              var token_a_divested : nat := s.token_a_pool * shares / s.total_supply;
-              var token_b_divested : nat := s.token_b_pool * shares / s.total_supply;
-
               require(
                 s.weight = 0n or s.weight = 500_000n or s.weight = 1_000_000n,
                 "INVALID_WEIGHT"
               );
-              require(Tezos.sender = s.last_sender, "WRONG_SENDER");
-              
-              if s.weight = 0n then { // only token A
-                const (out, token_b_pool, token_a_pool) = swap(token_b_divested, s.token_b_pool, s.token_a_pool);
-                token_a_divested := token_a_divested + out;
-                token_b_divested := 0n;
+              require(Tezos.get_sender() = s.last_sender, "WRONG_SENDER");
 
-                s.token_a_pool := token_a_pool;
-                s.token_b_pool := token_b_pool;
-              } else if s.weight = 1_000_000n then { // only token B
-                const (out, token_a_pool, token_b_pool) = swap(token_a_divested, s.token_a_pool, s.token_b_pool);
-                token_a_divested := 0n;
-                token_b_divested := token_b_divested + out;
+              const shares = abs(value);
 
-                s.token_a_pool := token_a_pool;
-                s.token_b_pool := token_b_pool;
-              } else skip; // according to current pools
+              var token_a_divested : nat := 0n;
+              var token_b_divested : nat := 0n;
+              if s.weight = 500_000n then {
+                token_a_divested := s.token_a_pool * shares / s.total_supply;
+                token_b_divested := s.token_b_pool * shares / s.total_supply;
+              } else {
+                const token_pool_out = if s.weight = 0n
+                  then // only token A
+                    s.token_a_pool
+                  else // only token B; weight == 1_000_000n by require above
+                    s.token_b_pool;
+
+                const new_total_supply = s.total_supply - shares;
+            
+                const token_out_ratio = new_total_supply * new_total_supply * precision / (s.total_supply * s.total_supply); // (new_supply * old_supply) ^ 2
+                const new_token_pool_out = token_out_ratio * token_pool_out / precision;
+
+                const token_amount_out_before_swap_fee = abs(token_pool_out - new_token_pool_out);
+
+                const token_amount_out = token_amount_out_before_swap_fee * 9985n / 10_000n;                    
+                
+                if s.weight = 0n then { // only token A
+                  token_a_divested := token_amount_out;
+                } else { // only token B
+                  token_b_divested := token_amount_out;
+                };
+              };
 
               s.total_supply := abs(s.total_supply - shares);
               s.token_a_pool := abs(s.token_a_pool - token_a_divested);
               s.token_b_pool := abs(s.token_b_pool - token_b_divested);
 
-              const receiver : address = case (el.1) of
-                | Some(hash) -> Tezos.address(Tezos.implicit_account(hash))
+              const receiver : address = case (Bytes.unpack(bound_data) : option(key_hash)) of [
+                | Some(h) -> Tezos.address(Tezos.implicit_account(h))
                 | None -> (failwith("No receiver provided") : address)
-              end;
+              ];
               
               if token_a_divested > 0n then {
                 const tx : operation = Tezos.transaction(
-                  (Tezos.self_address, (receiver, token_a_divested)),
+                  (Tezos.get_self_address(), (receiver, token_a_divested)),
                   0mutez,
                   fa12_transfer_entrypoint(s.token_a_address)
                 );
@@ -127,7 +138,7 @@ block {
 
               if token_b_divested > 0n then {
                 const tx : operation = Tezos.transaction(
-                  (Tezos.self_address, (receiver, token_b_divested)),
+                  (Tezos.get_self_address(), (receiver, token_b_divested)),
                   0mutez,
                   fa12_transfer_entrypoint(s.token_b_address)
                 );
@@ -135,6 +146,8 @@ block {
               } else skip;
 
             } else {
+              require(Tezos.get_sender() = s.last_sender, "WRONG_SENDER");
+
               const req_shares = abs(value);
 
               var token_a_req := 0n;
@@ -149,32 +162,39 @@ block {
                   token_a_req := ceil_div(req_shares * s.token_a_pool, s.total_supply);
                   token_b_req := ceil_div(req_shares * s.token_b_pool, s.total_supply);
                 } else {
-                  const total_supply_sq = s.total_supply * s.total_supply;
-                  const req_shares_sq = req_shares * req_shares;
-                  if s.weight = 0n then { // only token A
-                    token_a_req := (1997n * s.token_a_pool * s.total_supply * req_shares + 1996n * s.token_a_pool * req_shares_sq) / (1000n * total_supply_sq + 999n * s.total_supply * req_shares);
-                  } else if s.weight = 1_000_000n then { // only token B
-                    token_b_req := (1997n * s.token_b_pool * s.total_supply * req_shares + 1996n * s.token_b_pool * req_shares_sq) / (1000n * total_supply_sq + 999n * s.total_supply * req_shares);
-                  } else skip;
+                  const token_pool_in = if s.weight = 0n
+                    then // only token A
+                      s.token_a_pool
+                    else // only token B; weight == 1_000_000n by require above
+                      s.token_b_pool;
+
+                  const new_total_supply = s.total_supply + req_shares;
+                  const token_in_ratio = new_total_supply * new_total_supply * precision / (s.total_supply * s.total_supply); // (new_supply * old_supply) ^ 2
+                  const token_amount_in_after_fee = abs(token_pool_in * token_in_ratio / precision - token_pool_in);
+                  const token_amount_in = token_amount_in_after_fee * 9985n / 10_000n;
+
+                  if s.weight = 0n then {
+                    token_a_req := token_amount_in;
+                  } else {
+                    token_b_req := token_amount_in;
+                  };
                 };
               } else {
                 if s.weight >= 1_000_000n then {
                   token_a_req := req_shares;
                   token_b_req := req_shares * s.weight / 1_000_000n;
                 } else {
-                  token_a_req := req_shares * s.weight / 1_000_000n;
+                  token_a_req := req_shares * 1_000_000n / s.weight;
                   token_b_req := req_shares;
                 }
               };
-
-              require(Tezos.sender = s.last_sender, "WRONG_SENDER");
 
               s.total_supply := s.total_supply + req_shares;
               s.token_a_pool := s.token_a_pool + token_a_req;
               s.token_b_pool := s.token_b_pool + token_b_req;
               
               if token_a_req > 0n then {
-                const tx : operation = Tezos.transaction((Tezos.sender, (Tezos.self_address, token_a_req)),
+                const tx : operation = Tezos.transaction((Tezos.get_sender(), (Tezos.get_self_address(), token_a_req)),
                   0mutez,
                   fa12_transfer_entrypoint(s.token_a_address)
                 );
@@ -182,7 +202,7 @@ block {
               } else skip;
 
               if token_b_req > 0n then {
-                const tx : operation = Tezos.transaction((Tezos.sender, (Tezos.self_address, token_b_req)),
+                const tx : operation = Tezos.transaction((Tezos.get_sender(), (Tezos.get_self_address(), token_b_req)),
                   0mutez,
                   fa12_transfer_entrypoint(s.token_b_address)
                 );
@@ -191,12 +211,12 @@ block {
             }
           };
           (* update ledger state *)
-          s.ledger := output;
+          s.ledger := output.1.1;
         } 
       | None -> block {
         failwith("Incorrect sapling update")
       }
-    end;
+    ];
   }
 } with (operations, s)
 

@@ -3,7 +3,7 @@
 alias mockup-client='tezos-client --mode mockup --base-dir /tmp/mockup'
 
 function chosen_ligo
-    docker run -v $PWD:$PWD --rm -i ligolang/ligo:0.21.0 $argv
+    docker run -v $PWD:$PWD --rm -i ligolang/ligo:next $argv
 end
 
 function contract_address
@@ -33,7 +33,7 @@ set token_storage_ligo "record [
   ];
 ]"
 
-set token_storage_mich (chosen_ligo compile-storage $PWD/contracts/main/TokenFA12.ligo main (echo $token_storage_ligo | string collect))
+set token_storage_mich (chosen_ligo compile storage $PWD/contracts/main/TokenFA12.ligo (echo $token_storage_ligo | string collect))
 
 mockup-client originate contract token_a transferring 1 from bootstrap1 \
                         running ./contracts/compiled/TokenFA12.tz \
@@ -50,87 +50,85 @@ mockup-client originate contract token_b transferring 1 from bootstrap1 \
 set token_b_address (contract_address token_b | string collect)
 
 set dex_storage "record [
-  ledger = (0, (Tezos.sapling_empty_state : sapling_state(8)));
+  ledger = (Tezos.sapling_empty_state : sapling_state(8));
   token_a_address = (\"$token_a_address\" : address);
   token_b_address = (\"$token_b_address\" : address);
   token_a_pool = 0n;
   token_b_pool = 0n;
   total_supply = 0n;
-  proportion = 0n;
+  weight = 0n;
+  last_sender = (\"tz1ZZZZZZZZZZZZZZZZZZZZZZZZZZZZNkiRg\" : address);
 ]"
 
-set dex_storage_mich (chosen_ligo compile-storage $PWD/contracts/main/SaplingFA12.ligo main (echo $dex_storage | string collect))
+set dex_storage_mich (chosen_ligo compile storage $PWD/contracts/main/KathmaSapling.ligo (echo $dex_storage | string collect))
 
 echo $dex_storage_mich
 
-mockup-client originate contract sapling_token transferring 0 from bootstrap1 \
-                        running ./contracts/compiled/SaplingFA12.tz \
+mockup-client originate contract sapling_dex transferring 0 from bootstrap1 \
+                        running ./contracts/compiled/KathmaSapling.tz \
                         --burn-cap 3 --force \
                         --init (echo $dex_storage_mich)
 
-set sapling_token_address (contract_address sapling_token | string collect)
+set sapling_dex_address (contract_address sapling_dex | string collect)
 
-mockup-client call sapling_token from $bob \
-    --burn-cap 1 \
-    --entrypoint "prepare" --arg "500"
-
-mockup-client get contract storage for sapling_token
+mockup-client get contract storage for sapling_dex
 
 mockup-client call token_a from $alice \
     --burn-cap 1 \
-    --entrypoint "approve" --arg "Pair \"$sapling_token_address\" 100000000"
+    --entrypoint "approve" --arg "Pair \"$sapling_dex_address\" 100000000"
 
 mockup-client call token_a from $bob \
     --burn-cap 1 \
-    --entrypoint "approve" --arg "Pair \"$sapling_token_address\" 100000000"
+    --entrypoint "approve" --arg "Pair \"$sapling_dex_address\" 100000000"
 
   mockup-client call token_b from $alice \
     --burn-cap 1 \
-    --entrypoint "approve" --arg "Pair \"$sapling_token_address\" 100000000"
+    --entrypoint "approve" --arg "Pair \"$sapling_dex_address\" 100000000"
 
 mockup-client call token_b from $bob \
     --burn-cap 1 \
-    --entrypoint "approve" --arg "Pair \"$sapling_token_address\" 100000000"
+    --entrypoint "approve" --arg "Pair \"$sapling_dex_address\" 100000000"
 
 # mockup-client sapling man
 
-# generate two shielded keys for Alice and Bob and use them for the sapling_token contract
+# generate two shielded keys for Alice and Bob and use them for the sapling_dex contract
 # the memo size has to be indicated
 mockup-client sapling gen key alice -f --unencrypted
-mockup-client sapling use key alice for contract sapling_token --memo-size 8
+mockup-client sapling use key alice for contract sapling_dex --memo-size 8
 mockup-client sapling gen key bob -f --unencrypted
-mockup-client sapling use key bob for contract sapling_token --memo-size 8
+mockup-client sapling use key bob for contract sapling_dex --memo-size 8
 
-# manually generate an address for Alice to receive shielded tokens.
-# mockup-client sapling gen address alice
-# replace it with output of the previous command
-# zet13oMkE5SXGaMtEni351y2GmsUCgPLkgyXmTWwA3rJPNeXhZedn6U4tsQqnPZjoUuDf # Alice's address
 set alice_sapling_address (gen_sapling_address alice)
 set bob_sapling_address (gen_sapling_address bob)
 
 mockup-client from fa1.2 contract token_a get balance for $alice
 
-# shield 10 tokens from alice to zet1alice
-mockup-client sapling shield 0.900000 from $alice to $alice_sapling_address using sapling_token --burn-cap 2 
-# mockup-client sapling get balance for alice in contract sapling_token
-# mockup-client get contract storage for sapling_token
+### initialize exchange ###
 
-mockup-client sapling shield 0.100000 from $bob to $bob_sapling_address using sapling_token --burn-cap 2 
-
-mockup-client call sapling_token from $bob \
+mockup-client call sapling_dex from $alice \
     --burn-cap 1 \
-    --entrypoint "prepare" --arg "1000"
+    --entrypoint "prepare" --arg "1000000"
 
-mockup-client sapling unshield 0.100000 from bob to $bob using sapling_token --burn-cap 1
+mockup-client sapling shield 0.010000 from $alice to $alice_sapling_address using sapling_dex --burn-cap 2 
+mockup-client get contract storage for sapling_dex
+mockup-client from fa1.2 contract token_a get balance for $sapling_dex_address
+mockup-client from fa1.2 contract token_b get balance for $sapling_dex_address
 
-mockup-client get contract storage for sapling_token
-mockup-client from fa1.2 contract token_a get balance for $bob
-mockup-client from fa1.2 contract token_b get balance for $bob
-
-exit 0
-
-mockup-client sapling unshield 0.900000 from alice to $alice using sapling_token --burn-cap 1
+set bob_balance_before_invest (mockup-client from fa1.2 contract token_b get balance for $bob)
 
 
-mockup-client from fa1.2 contract token_a get balance for $alice
-mockup-client from fa1.2 contract token_b get balance for $alice
+### invest some ###
+mockup-client call sapling_dex from $bob \
+    --burn-cap 1 \
+    --entrypoint "prepare" --arg "0"
+mockup-client sapling shield 0.001000 from $bob to $bob_sapling_address using sapling_dex --burn-cap 2 
+mockup-client from fa1.2 contract token_a get balance for $sapling_dex_address
+mockup-client from fa1.2 contract token_b get balance for $sapling_dex_address
+
+### divest some ###
+mockup-client call sapling_dex from $bob \
+    --burn-cap 1 \
+    --entrypoint "prepare" --arg "1000000"
+mockup-client sapling unshield 0.001000 from bob to $bob using sapling_dex --burn-cap 2 
+mockup-client from fa1.2 contract token_a get balance for $sapling_dex_address
+mockup-client from fa1.2 contract token_b get balance for $sapling_dex_address
