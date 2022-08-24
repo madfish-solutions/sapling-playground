@@ -60,12 +60,12 @@ set dex_storage "record [
   last_sender = (\"tz1ZZZZZZZZZZZZZZZZZZZZZZZZZZZZNkiRg\" : address);
 ]"
 
-set dex_storage_mich (chosen_ligo compile storage $PWD/contracts/main/KathmaSapling.ligo (echo $dex_storage | string collect))
+set dex_storage_mich (chosen_ligo compile storage $PWD/contracts/main/SaplingDex.ligo (echo $dex_storage | string collect))
 
 echo $dex_storage_mich
 
 mockup-client originate contract sapling_dex transferring 0 from bootstrap1 \
-                        running ./contracts/compiled/KathmaSapling.tz \
+                        running ./contracts/compiled/SaplingDex.tz \
                         --burn-cap 3 --force \
                         --init (echo $dex_storage_mich)
 
