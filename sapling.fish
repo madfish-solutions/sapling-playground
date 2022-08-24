@@ -132,3 +132,13 @@ mockup-client call sapling_dex from $bob \
 mockup-client sapling unshield 0.001000 from bob to $bob using sapling_dex --burn-cap 2 
 mockup-client from fa1.2 contract token_a get balance for $sapling_dex_address
 mockup-client from fa1.2 contract token_b get balance for $sapling_dex_address
+
+set bob_balance_after_divest (mockup-client from fa1.2 contract token_b get balance for $bob)
+
+set swap_out (math $bob_balance_after_divest - $bob_balance_before_invest)
+
+echo swap_out: $swap_out
+if test $swap_out -ne 1728
+  echo "swap out value is wrong. Expected 1728"
+  exit 1
+end
