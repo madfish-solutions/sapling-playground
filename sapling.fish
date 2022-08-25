@@ -23,11 +23,11 @@ set token_storage_ligo "record [
   total_supply = 100_000_000n;
   ledger = big_map[
     (\"$alice\" : address) -> record[
-        balance = 450_000n;
+        balance = 4_500_000n;
         allowances = (map [] : map(address, nat)); 
     ];
     (\"$bob\" : address) -> record[
-        balance = 50_000n;
+        balance = 500_000n;
         allowances = (map [] : map(address, nat)); 
     ];
   ];
@@ -109,19 +109,20 @@ mockup-client call sapling_dex from $alice \
     --burn-cap 1 \
     --entrypoint "prepare" --arg "1000000"
 
-mockup-client sapling shield 0.010000 from $alice to $alice_sapling_address using sapling_dex --burn-cap 2 
+mockup-client sapling shield 0.200000 from $alice to $alice_sapling_address using sapling_dex --burn-cap 2 
 mockup-client get contract storage for sapling_dex
 mockup-client from fa1.2 contract token_a get balance for $sapling_dex_address
 mockup-client from fa1.2 contract token_b get balance for $sapling_dex_address
 
-set bob_balance_before_invest (mockup-client from fa1.2 contract token_b get balance for $bob)
+set bob_a_balance_before (mockup-client from fa1.2 contract token_a get balance for $bob)
+set bob_b_balance_before (mockup-client from fa1.2 contract token_b get balance for $bob)
 
 
 ### invest some ###
 mockup-client call sapling_dex from $bob \
     --burn-cap 1 \
     --entrypoint "prepare" --arg "0"
-mockup-client sapling shield 0.001000 from $bob to $bob_sapling_address using sapling_dex --burn-cap 2 
+mockup-client sapling shield 0.100000 from $bob to $bob_sapling_address using sapling_dex --burn-cap 2 
 mockup-client from fa1.2 contract token_a get balance for $sapling_dex_address
 mockup-client from fa1.2 contract token_b get balance for $sapling_dex_address
 
@@ -129,15 +130,19 @@ mockup-client from fa1.2 contract token_b get balance for $sapling_dex_address
 mockup-client call sapling_dex from $bob \
     --burn-cap 1 \
     --entrypoint "prepare" --arg "1000000"
-mockup-client sapling unshield 0.001000 from bob to $bob using sapling_dex --burn-cap 2 
+mockup-client sapling unshield 0.100000 from bob to $bob using sapling_dex --burn-cap 2 
 mockup-client from fa1.2 contract token_a get balance for $sapling_dex_address
 mockup-client from fa1.2 contract token_b get balance for $sapling_dex_address
 
-set bob_balance_after_divest (mockup-client from fa1.2 contract token_b get balance for $bob)
+set bob_a_balance_after (mockup-client from fa1.2 contract token_a get balance for $bob)
+set bob_b_balance_after (mockup-client from fa1.2 contract token_b get balance for $bob)
 
-set swap_out (math $bob_balance_after_divest - $bob_balance_before_invest)
+set swap_in (math $bob_a_balance_after - $bob_a_balance_before)
+set swap_out (math $bob_b_balance_after - $bob_b_balance_before)
 
+echo swap_in: $swap_in
 echo swap_out: $swap_out
+
 if test $swap_out -ne 1728
   echo "swap out value is wrong. Expected 1728"
   exit 1
