@@ -1,7 +1,7 @@
 #include "../partial/FA12Types.ligo"
 #include "../partial/FA12Methods.ligo"
 
-const precision : nat = 1_000_000n;
+const precision : nat = 1_000_000_000_000_000_000n;
 
 type sapling_element is sapling_state(8);
 
@@ -72,6 +72,7 @@ function swap(
 
 function handle_sapling(const sp : sapling_params; var s : storage ) : return is 
 block {
+  require(Tezos.get_amount() = 0mutez, "Can't accept tez");
   var operations := (list [] : list(operation));
   for el in list(sp) block {
     case Tezos.sapling_verify_update(el, s.ledger) of [
@@ -102,9 +103,9 @@ block {
                   else // only token B; weight == 1_000_000n by require above
                     s.token_b_pool;
 
-                const new_total_supply = s.total_supply - shares;
+                const new_total_supply = abs(s.total_supply - shares);
             
-                const token_out_ratio = new_total_supply * new_total_supply * precision / (s.total_supply * s.total_supply); // (new_supply * old_supply) ^ 2
+                const token_out_ratio = ceil_div(new_total_supply * new_total_supply * precision, (s.total_supply * s.total_supply)); // (new_supply * old_supply) ^ 2
                 const new_token_pool_out = token_out_ratio * token_pool_out / precision;
 
                 const token_amount_out_before_swap_fee = abs(token_pool_out - new_token_pool_out);
