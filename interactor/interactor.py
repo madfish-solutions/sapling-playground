@@ -175,8 +175,8 @@ async def respond(websocket):
             elif command == "get_account":
                 response = await get_accounts()
             elif command == "create_account":
-                name = data["name"]
-                response = await create_account(name)
+                account = data["account"]
+                response = await create_account(account)
             elif command == "gen_new_address":
                 account = data["account"]
                 response = await gen_new_address(account)
@@ -220,6 +220,7 @@ import sys
 
 async def main():
     async with websockets.serve(respond, "localhost", 8765):
+        print("Server started...")
         await asyncio.Future()  # run forever
 
 asyncio.run(main())

@@ -1,0 +1,6 @@
+{"command": "create_account", "account": "googa"}
+{"command": "gen_new_address", "account": "googa"}
+{"command": "get_balance", "account": "bob", "contract": "sapling_dex"}
+{"command": "authorize_contract", "account": "googa", "contract": "sapling_dex"}
+{"command": "shield", "account": "googa", "to_zaddress": "zet1477pxBNR48uQEs6q4kH5mTCJXG6cuLi43MHZ2ehJ1LR9RRcQv7M8JUDbTXXmGJQNp", "contract": "sapling_dex", "amount": 16}
+{"command": "unshield", "from_zaddress": "bob", "to_address": "tz1gjaF81ZRRvdzjobyfVNsAeSC6PScjfQwN", "contract": "sapling_dex", "amount": 16}
