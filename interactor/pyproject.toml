@@ -7,7 +7,7 @@ license = "MIT"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-websockets = "^10.3"
+bottle = "^0.12.23"
 
 [tool.poetry.dev-dependencies]
 

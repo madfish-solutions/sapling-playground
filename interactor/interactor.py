@@ -1,9 +1,7 @@
-import asyncio
 import subprocess
-import argparse
-import websockets
 import json
-# from pytezos import pytezos
+import sys
+from bottle import get, post, run, request, response, hook, HTTPResponse
 
 from utils import mock_tez_amount, extract_sapling_parameter_from_error, find_nth
 from utils import calc_pool_in_given_single_out, extract_generic_error
@@ -67,12 +65,15 @@ def get_pools_from_storage(contract):
     pool_b = result[start:start + end]
     return pool_a, pool_b
 
-async def get_accounts():
+@get("/accounts")
+def get_accounts():
     result = subprocess.run(CLIENT + ["sapling", "list", "keys"], capture_output=True, text=True)
     accounts = result.stdout.splitlines()
-    return accounts
+    return {"accounts": accounts}
 
-async def gen_new_address(account):
+@post("/gen_new_address")
+def gen_new_address():
+    account = request.json.get('account')
     args = CLIENT + ["sapling", "gen", "address", account]
     out, err, code = interactive_run(args)
     if code != 0:
@@ -85,30 +86,46 @@ async def gen_new_address(account):
     
     return {"address" : address, "index" : index}
 
-async def get_balance(account, contract):
-    result = subprocess.run(CLIENT + ["sapling", "get", "balance", "for", account, "in", "contract", contract], capture_output=True, text=True)
-    words = result.stdout.split(" ")
+@post("/balance")
+def get_balance():
+    account = request.json.get('account')
+    contract = request.json.get('contract')
+    client_args = CLIENT + ["sapling", "get", "balance", "for", account, "in", "contract", contract]
+    (out, err, code) = interactive_run(client_args)
+    if code != 0:
+        return {"error" : "no_such_account_or_contract"}
+
+    words = out.split(" ")
     amount = words[3]
     amount = amount[:-2]
-    if result.returncode != 0:
-        return {"error" : "no_such_account_or_contract"}
     return {"account": account, "contract": contract, "balance" : amount}
 
-async def create_account(name):
-    result = subprocess.Popen(CLIENT + ["sapling", "gen", "key", name], text=True)
+@post("/create_account")
+def create_account():
+    account = request.json.get('account')
+    result = subprocess.Popen(CLIENT + ["sapling", "gen", "key", account], text=True)
     result.wait()
     if result.returncode != 0:
         return {"error" : "already_exists"}
-    return {"new_account" : name}
+    return {"new_account" : account}
 
-async def authorize_contract(account, contract):
+@post("/authorize_contract")
+def authorize_contract():
+    account = request.json.get('account')
+    contract = request.json.get('contract')
+
     result = subprocess.Popen(CLIENT + ["sapling", "use", "key", account, "for", "contract", contract], text=True)
     result.wait()
     if result.returncode != 0:
         return {"error" : "unspecified_error_or_already_authorized"}
     return {"account": account, "contract": contract, "authorized" : True}
 
-async def shield(account, amount, to_zaddress, contract):
+@post("/shield")
+def shield():
+    contract = request.json.get('contract')
+    amount = request.json.get('amount')
+    to_zaddress = request.json.get('to_zaddress')
+
     dummy_exists = check_dummy_account_exists()
     if not dummy_exists:
         add_dummy_secret_key()
@@ -129,7 +146,13 @@ async def shield(account, amount, to_zaddress, contract):
 
     return {"shield" : sapling_payload}
 
-async def unshield(from_zaddress, amount, to_address, contract):
+@post("/unshield")
+def unshield():
+    from_zaddress = request.json.get('from_zaddress')
+    amount        = request.json.get('amount')
+    to_address    = request.json.get('to_address')
+    contract      = request.json.get('contract')
+
     dummy_exists = check_dummy_account_exists()
     if not dummy_exists:
         add_dummy_secret_key()
@@ -153,49 +176,6 @@ async def unshield(from_zaddress, amount, to_address, contract):
     return {"unshield" : sapling_payload}
 
 
-async def respond(websocket):
-    async for message in websocket:
-        try:
-            data = json.loads(message)
-        
-            command = data["command"]
-            response = {}
-            if command == "shield":
-                account = data["account"]
-                amount = data["amount"]
-                to_zaddress = data["to_zaddress"]
-                contract = data["contract"]
-                response = await shield(account, amount, to_zaddress, contract)
-            elif command == "unshield":
-                from_zaddress = data["from_zaddress"]
-                amount = data["amount"]
-                to_address = data["to_address"]
-                contract = data["contract"]
-                response = await unshield(from_zaddress, amount, to_address, contract)
-            elif command == "get_account":
-                response = await get_accounts()
-            elif command == "create_account":
-                account = data["account"]
-                response = await create_account(account)
-            elif command == "gen_new_address":
-                account = data["account"]
-                response = await gen_new_address(account)
-            elif command == "get_balance":
-                account = data["account"]
-                contract = data["contract"]
-                response = await get_balance(account, contract)
-            elif command == "authorize_contract":
-                account = data["account"]
-                contract = data["contract"]
-                response = await authorize_contract(account, contract)
-            else:
-                response = {"unknown_command": command}
-        except Exception as e:
-            print(e)
-            response = {"error": "cant_parse_json"}
-            
-        await websocket.send(json.dumps(response))
-
 def interactive_run(args):
     outbuf = ""
     errbuf = ""
@@ -213,14 +193,30 @@ def interactive_run(args):
 
     errbuf = process.stderr.read().decode('utf-8', errors='replace')
 
+    print("\nDone!")
 
     return (outbuf, errbuf, process.returncode)
 
-import sys        
 
-async def main():
-    async with websockets.serve(respond, "localhost", 8765):
-        print("Server started...")
-        await asyncio.Future()  # run forever
+### Setup CORS stuff ###
 
-asyncio.run(main())
+cors_headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+}
+
+@hook('before_request')
+def handle_options():
+    if request.method == 'OPTIONS':
+        # Bypass request routing and immediately return a response
+        raise HTTPResponse(headers=cors_headers)
+
+@hook('after_request')
+def enable_cors():
+    for key, value in cors_headers.items():
+       response.set_header(key, value)
+
+### Run the server ###
+
+run(host='localhost', port=8765, quiet=True)

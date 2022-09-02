@@ -1,0 +1,15 @@
+[[package]]
+name = "bottle"
+version = "0.12.23"
+description = "Fast and simple WSGI-framework for small web-applications."
+category = "main"
+optional = false
+python-versions = "*"
+
+[metadata]
+lock-version = "1.1"
+python-versions = "^3.8"
+content-hash = "e85918607ba416264169b476797638a4cec5ab9a5c199620ace57c9eda7bf90f"
+
+[metadata.files]
+bottle = []
