@@ -1,21 +1,19 @@
 import subprocess
 import json
 import sys
+from decimal import Decimal
 from bottle import get, post, run, request, response, hook, HTTPResponse
 
 from utils import mock_tez_amount, extract_sapling_parameter_from_error, find_nth
 from utils import calc_pool_in_given_single_out, extract_generic_error
 
 
-CLIENT = ["tezos-client", "--mode", "mockup", "--base-dir", "/tmp/mockup"]
-# DUMMY_ALIAS = "sapling_dex_dummy_alias_safe_to_delete"
-DUMMY_ALIAS = "bootstrap4"
-CALLER = "bootstrap5"
-BURN_CAP = 0.2
+# CLIENT = ["tezos-client", "--mode", "mockup", "--base-dir", "/tmp/mockup"]
+CLIENT = ["tezos-client"]
+DUMMY_ALIAS = "dummy_safe_to_delete"
 
 # network-wide bob secret added just to allow tezos-client to fail so we can extract the payload
 UNECRYPTED_BOB_SK = "unencrypted:edsk3RFfvaFaxbHx8BMtEW1rKQcPtDML3LXjNqMNLCzC3wLC1bWbAt"
-SAPLING_ACOUNT_NAME = "account3"
 
 # weights = ["token_a_only", "token_b_only", "proportional"]
 
@@ -40,7 +38,7 @@ def check_dummy_account_exists():
     return result.returncode == 0
 
 def add_dummy_secret_key():
-    result = subprocess.run(CLIENT + ["import", "secret", "key", DUMMY_ALIAS, UNECRYPTED_BOB_SK], capture_output=True)
+    result = subprocess.run(CLIENT + ["import", "secret", "key", DUMMY_ALIAS, UNECRYPTED_BOB_SK, "--force"], capture_output=True)
     assert result.returncode == 0, "Could not import dummy alias"
 
 def get_pools_from_storage(contract):
@@ -86,19 +84,25 @@ def gen_new_address():
     
     return {"address" : address, "index" : index}
 
-@post("/balance")
+@get("/balance")
 def get_balance():
-    account = request.json.get('account')
-    contract = request.json.get('contract')
+    account = request.query.get('account')
+    contract = request.query.get('contract')
+
+    authorize(account, contract)
+
     client_args = CLIENT + ["sapling", "get", "balance", "for", account, "in", "contract", contract]
     (out, err, code) = interactive_run(client_args)
     if code != 0:
         return {"error" : "no_such_account_or_contract"}
 
+    print(out)
+
     words = out.split(" ")
-    amount = words[3]
-    amount = amount[:-2]
-    return {"account": account, "contract": contract, "balance" : amount}
+    amount_word = words[-1]
+    amount_numbers = "".join(filter(str.isdigit, amount_word))
+    amount = Decimal(amount_numbers) * Decimal(1_000_000)
+    return {"account": account, "contract": contract, "balance" : str(amount)}
 
 @post("/create_account")
 def create_account():
@@ -107,21 +111,15 @@ def create_account():
     result.wait()
     if result.returncode != 0:
         return {"error" : "already_exists"}
-    return {"new_account" : account}
+    return {"account" : account}
 
-@post("/authorize_contract")
-def authorize_contract():
-    account = request.json.get('account')
-    contract = request.json.get('contract')
-
+def authorize(account, contract):
     result = subprocess.Popen(CLIENT + ["sapling", "use", "key", account, "for", "contract", contract], text=True)
     result.wait()
-    if result.returncode != 0:
-        return {"error" : "unspecified_error_or_already_authorized"}
-    return {"account": account, "contract": contract, "authorized" : True}
 
 @post("/shield")
 def shield():
+    account = request.json.get('account')
     contract = request.json.get('contract')
     amount = request.json.get('amount')
     to_zaddress = request.json.get('to_zaddress')
@@ -129,6 +127,8 @@ def shield():
     dummy_exists = check_dummy_account_exists()
     if not dummy_exists:
         add_dummy_secret_key()
+
+    authorize(account, contract)
     
     client_args = CLIENT + ["sapling", "shield", mock_tez_amount(amount), "from", DUMMY_ALIAS, "to", to_zaddress, "using", contract, "--dry-run"]
 
@@ -144,20 +144,23 @@ def shield():
     # somehow this payload ends up in stdout
     sapling_payload = extract_sapling_parameter_from_error(out)
 
-    return {"shield" : sapling_payload}
+    return {"shield" : sapling_payload[2:]}
 
 @post("/unshield")
 def unshield():
-    from_zaddress = request.json.get('from_zaddress')
-    amount        = request.json.get('amount')
-    to_address    = request.json.get('to_address')
-    contract      = request.json.get('contract')
+    account    = request.json.get('account')
+    amount     = request.json.get('amount')
+    to_address = request.json.get('to_address')
+    contract   = request.json.get('contract')
+
 
     dummy_exists = check_dummy_account_exists()
     if not dummy_exists:
         add_dummy_secret_key()
+
+    authorize(account, contract)
     
-    client_args = CLIENT + ["sapling", "unshield", mock_tez_amount(amount), "from", from_zaddress, "to", to_address, "using", contract, "--dry-run"]
+    client_args = CLIENT + ["sapling", "unshield", mock_tez_amount(amount), "from", account, "to", to_address, "using", contract, "--dry-run"]
 
     print(client_args)
 
@@ -173,7 +176,7 @@ def unshield():
     # somehow this payload ends up in stdout
     sapling_payload = extract_sapling_parameter_from_error(out)
 
-    return {"unshield" : sapling_payload}
+    return {"unshield" : sapling_payload[2:]}
 
 
 def interactive_run(args):
@@ -219,4 +222,4 @@ def enable_cors():
 
 ### Run the server ###
 
-run(host='localhost', port=8765, quiet=True)
+run(host='0.0.0.0', port=8765, quiet=True)
