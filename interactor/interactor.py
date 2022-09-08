@@ -107,7 +107,7 @@ def get_balance():
 @post("/create_account")
 def create_account():
     account = request.json.get('account')
-    result = subprocess.Popen(CLIENT + ["sapling", "gen", "key", account], text=True)
+    result = subprocess.Popen(CLIENT + ["sapling", "gen", "key", account, "--unencrypted"], text=True)
     result.wait()
     if result.returncode != 0:
         return {"error" : "already_exists"}
@@ -160,7 +160,7 @@ def unshield():
 
     authorize(account, contract)
     
-    client_args = CLIENT + ["sapling", "unshield", mock_tez_amount(amount), "from", account, "to", to_address, "using", contract, "--dry-run"]
+    client_args = CLIENT + ["sapling", "unshield", mock_tez_amount(amount), "from", account, "to", to_address, "using", contract, "--dry-run", "--burn-cap", "0.01"]
 
     print(client_args)
 
