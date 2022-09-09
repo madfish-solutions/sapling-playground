@@ -160,7 +160,7 @@ def unshield():
 
     authorize(account, contract)
     
-    client_args = CLIENT + ["sapling", "unshield", mock_tez_amount(amount), "from", account, "to", to_address, "using", contract, "--dry-run", "--burn-cap", "0.01"]
+    client_args = CLIENT + ["sapling", "unshield", mock_tez_amount(amount), "from", account, "to", to_address, "using", contract, "--dry-run", "--burn-cap", "0.1"]
 
     print(client_args)
 
