@@ -58,6 +58,8 @@ def gen_new_address():
     out, err, code = interactive_run(args)
     if code != 0:
         generic_error = extract_generic_error(err)
+        response.status = 400
+        response.content_type = 'application/json'
         return {"error": generic_error}
 
     split = out.splitlines()
@@ -77,6 +79,8 @@ def get_balance():
     client_args = CLIENT + ["sapling", "get", "balance", "for", account, "in", "contract", contract]
     (out, err, code) = interactive_run(client_args)
     if code != 0:
+        response.status = 400
+        response.content_type = 'application/json'
         return {"error": "no_such_account_or_contract"}
 
     print(out)
@@ -94,6 +98,8 @@ def create_account():
     result = subprocess.Popen(CLIENT + ["sapling", "gen", "key", account, "--unencrypted"], text=True)
     result.wait()
     if result.returncode != 0:
+        response.status = 400
+        response.content_type = 'application/json'
         return {"error": "already_exists"}
     return {"account": account}
 
@@ -125,7 +131,9 @@ def shield():
 
     # code is expected to be -1 here, so we attempt to detect a real error here
     if out.find("Parameter:") == -1:
-        generic_error = extract_generic_error(err)
+        generic_error = extract_generic_error(out)
+        response.status = 400
+        response.content_type = 'application/json'
         return {"error": generic_error}
 
     # somehow this payload ends up in stdout
@@ -158,7 +166,9 @@ def unshield():
 
     # code is expected to be -1 here, so we attempt to detect a real error here
     if out.find("Parameter:") == -1:
-        generic_error = extract_generic_error(err)
+        generic_error = extract_generic_error(out)
+        response.status = 400
+        response.content_type = 'application/json'
         return {"error": generic_error}
 
     # somehow this payload ends up in stdout

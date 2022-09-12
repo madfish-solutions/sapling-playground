@@ -14,8 +14,10 @@ def extract_sapling_parameter_from_error(message):
     return param
 
 def extract_generic_error(message):
-    pos = message.index("\n\n")
-    return message[:pos]
+    pos = message.rfind("rror:") # intentionally skipped `e`
+    start = pos + 7
+    end = message[start:].find("\n\n")
+    return message[start:start + end]
 
 def find_nth(haystack, needle, n):
     start = haystack.find(needle)
