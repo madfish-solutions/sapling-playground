@@ -62,6 +62,88 @@ function prepare(const prep : nat; var s : storage) : return is block {
   | None -> (failwith(error): nat)
   ]
 
+function initialize(const shares: nat; const weight: nat) is
+  if weight >= 1_000_000n then 
+      (shares, shares * weight / 1_000_000n)
+  else
+      (shares * 1_000_000n / weight, shares);
+
+function invest(
+  const shares   : nat;
+  const token_a_pool : nat;
+  const token_b_pool : nat;
+  const total_supply : nat;
+  const weight       : nat)
+                     : (nat * nat) is
+block {
+  var token_a_req := 0n;
+  var token_b_req := 0n;
+
+  require(
+    weight = 0n or weight = 500_000n or weight = 1_000_000n,
+    "INVALID_WEIGHT"
+  );
+  if weight = 500_000n then {
+    token_a_req := ceil_div(shares * token_a_pool, total_supply);
+    token_b_req := ceil_div(shares * token_b_pool, total_supply);
+
+  } else {
+    const token_pool_in = if weight = 0n
+      then // only token A
+        token_a_pool
+      else // only token B; weight == 1_000_000n by require above
+        token_b_pool;
+
+    const new_total_supply = total_supply + shares;
+    const token_in_ratio = new_total_supply * new_total_supply * precision / (total_supply * total_supply); // (new_supply * old_supply) ^ 2
+    const token_amount_in_after_fee = get_nat_or_fail(token_pool_in * token_in_ratio / precision - token_pool_in, "IMPOSSIBLE_NEW_POOL");
+    const token_amount_in = ceil_div(token_amount_in_after_fee * 10_000n, 9985n);
+
+    if weight = 0n then {
+      token_a_req := token_amount_in;
+    } else {
+      token_b_req := token_amount_in;
+    };
+  };
+} with (token_a_req, token_b_req)
+
+function divest(
+  const shares_to_burn : nat;
+  const token_a_pool   : nat;
+  const token_b_pool   : nat;
+  const total_supply   : nat;
+  const weight         : nat)
+                       : (nat * nat) is
+{
+  var token_a_divested : nat := 0n;
+  var token_b_divested : nat := 0n;
+  if weight = 500_000n then {
+    token_a_divested := token_a_pool * shares_to_burn / total_supply;
+    token_b_divested := token_b_pool * shares_to_burn / total_supply;
+  } else {
+    const token_pool_out = if weight = 0n
+      then // only token A
+        token_a_pool
+      else // only token B; weight == 1_000_000n by require above
+        token_b_pool;
+
+    const new_total_supply = get_nat_or_fail(total_supply - shares_to_burn, "LOW_TOTAL_SHARES");
+
+    const token_out_ratio = ceil_div(new_total_supply * new_total_supply * precision, (total_supply * total_supply)); // (new_supply * old_supply) ^ 2
+    const new_token_pool_out = token_out_ratio * token_pool_out / precision;
+
+    const token_amount_out_before_swap_fee = get_nat_or_fail(token_pool_out - new_token_pool_out, "IMPOSSIBLE_NEW_POOL");
+
+    const token_amount_out = token_amount_out_before_swap_fee * 9985n / 10_000n;                    
+    
+    if weight = 0n then { // only token A
+      token_a_divested := token_amount_out;
+    } else { // only token B
+      token_b_divested := token_amount_out;
+    };
+  };
+} with (token_a_divested, token_b_divested)
+
 function handle_sapling(const sp : sapling_params; var s : storage ) : return is 
 block {
   // require(Tezos.get_amount() = 0mutez, "Can't accept tez");
@@ -81,37 +163,12 @@ block {
               );
               require(Tezos.get_sender() = s.last_sender, "WRONG_SENDER");
 
-              const shares_burnt = abs(value);
+              const shares_to_burn = abs(value);
 
-              var token_a_divested : nat := 0n;
-              var token_b_divested : nat := 0n;
-              if s.weight = 500_000n then {
-                token_a_divested := s.token_a_pool * shares_burnt / s.total_supply;
-                token_b_divested := s.token_b_pool * shares_burnt / s.total_supply;
-              } else {
-                const token_pool_out = if s.weight = 0n
-                  then // only token A
-                    s.token_a_pool
-                  else // only token B; weight == 1_000_000n by require above
-                    s.token_b_pool;
+              const (token_a_divested, token_b_divested) =
+                divest(shares_to_burn, s.token_a_pool, s.token_b_pool, s.total_supply, s.weight);
 
-                const new_total_supply = get_nat_or_fail(s.total_supply - shares_burnt, "LOW_TOTAL_SHARES");
-            
-                const token_out_ratio = ceil_div(new_total_supply * new_total_supply * precision, (s.total_supply * s.total_supply)); // (new_supply * old_supply) ^ 2
-                const new_token_pool_out = token_out_ratio * token_pool_out / precision;
-
-                const token_amount_out_before_swap_fee = get_nat_or_fail(token_pool_out - new_token_pool_out, "IMPOSSIBLE_NEW_POOL");
-
-                const token_amount_out = token_amount_out_before_swap_fee * 9985n / 10_000n;                    
-                
-                if s.weight = 0n then { // only token A
-                  token_a_divested := token_amount_out;
-                } else { // only token B
-                  token_b_divested := token_amount_out;
-                };
-              };
-
-              s.total_supply := get_nat_or_fail(s.total_supply - shares_burnt, "LOW_TOTAL_SHARES");
+              s.total_supply := get_nat_or_fail(s.total_supply - shares_to_burn, "LOW_TOTAL_SHARES");
               s.token_a_pool := get_nat_or_fail(s.token_a_pool - token_a_divested, "LOW_POOL_A");
               s.token_b_pool := get_nat_or_fail(s.token_b_pool - token_b_divested, "LOW_POOL_B");
 
@@ -143,45 +200,11 @@ block {
 
               const req_shares = abs(value);
 
-              var token_a_req := 0n;
-              var token_b_req := 0n;
-
-              if s.total_supply =/= 0n then {
-                require(
-                  s.weight = 0n or s.weight = 500_000n or s.weight = 1_000_000n,
-                  "INVALID_WEIGHT"
-                );
-                if s.weight = 500_000n then {
-                  token_a_req := ceil_div(req_shares * s.token_a_pool, s.total_supply);
-                  token_b_req := ceil_div(req_shares * s.token_b_pool, s.total_supply);
-
-                } else {
-                  const token_pool_in = if s.weight = 0n
-                    then // only token A
-                      s.token_a_pool
-                    else // only token B; weight == 1_000_000n by require above
-                      s.token_b_pool;
-
-                  const new_total_supply = s.total_supply + req_shares;
-                  const token_in_ratio = new_total_supply * new_total_supply * precision / (s.total_supply * s.total_supply); // (new_supply * old_supply) ^ 2
-                  const token_amount_in_after_fee = get_nat_or_fail(token_pool_in * token_in_ratio / precision - token_pool_in, "IMPOSSIBLE_NEW_POOL");
-                  const token_amount_in = ceil_div(token_amount_in_after_fee * 10_000n, 9985n);
-
-                  if s.weight = 0n then {
-                    token_a_req := token_amount_in;
-                  } else {
-                    token_b_req := token_amount_in;
-                  };
-                };
-              } else {
-                if s.weight >= 1_000_000n then {
-                  token_a_req := req_shares;
-                  token_b_req := req_shares * s.weight / 1_000_000n;
-                } else {
-                  token_a_req := req_shares * 1_000_000n / s.weight;
-                  token_b_req := req_shares;
-                }
-              };
+              const (token_a_req, token_b_req) =
+                if s.total_supply > 0n then
+                  invest(req_shares, s.token_a_pool, s.token_b_pool, s.total_supply, s.weight)
+                else
+                  initialize(req_shares, s.weight);
 
               s.total_supply := s.total_supply + req_shares;
               s.token_a_pool := s.token_a_pool + token_a_req;
