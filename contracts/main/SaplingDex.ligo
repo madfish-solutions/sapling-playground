@@ -53,6 +53,15 @@ function prepare(const prep : nat; var s : storage) : return is block {
   s.last_sender := Tezos.get_sender();
 } with ((nil : list(operation)), s)
 
+[@inline] function get_nat_or_fail(
+  const value           : int;
+  const error           : string)
+                        : nat is
+  case is_nat(value) of [
+  | Some(natural) -> natural
+  | None -> (failwith(error): nat)
+  ]
+
 function handle_sapling(const sp : sapling_params; var s : storage ) : return is 
 block {
   // require(Tezos.get_amount() = 0mutez, "Can't accept tez");
@@ -72,13 +81,13 @@ block {
               );
               require(Tezos.get_sender() = s.last_sender, "WRONG_SENDER");
 
-              const shares = abs(value);
+              const shares_burnt = abs(value);
 
               var token_a_divested : nat := 0n;
               var token_b_divested : nat := 0n;
               if s.weight = 500_000n then {
-                token_a_divested := s.token_a_pool * shares / s.total_supply;
-                token_b_divested := s.token_b_pool * shares / s.total_supply;
+                token_a_divested := s.token_a_pool * shares_burnt / s.total_supply;
+                token_b_divested := s.token_b_pool * shares_burnt / s.total_supply;
               } else {
                 const token_pool_out = if s.weight = 0n
                   then // only token A
@@ -86,12 +95,12 @@ block {
                   else // only token B; weight == 1_000_000n by require above
                     s.token_b_pool;
 
-                const new_total_supply = abs(s.total_supply - shares);
+                const new_total_supply = get_nat_or_fail(s.total_supply - shares_burnt, "LOW_TOTAL_SHARES");
             
                 const token_out_ratio = ceil_div(new_total_supply * new_total_supply * precision, (s.total_supply * s.total_supply)); // (new_supply * old_supply) ^ 2
                 const new_token_pool_out = token_out_ratio * token_pool_out / precision;
 
-                const token_amount_out_before_swap_fee = abs(token_pool_out - new_token_pool_out);
+                const token_amount_out_before_swap_fee = get_nat_or_fail(token_pool_out - new_token_pool_out, "IMPOSSIBLE_NEW_POOL");
 
                 const token_amount_out = token_amount_out_before_swap_fee * 9985n / 10_000n;                    
                 
@@ -102,9 +111,9 @@ block {
                 };
               };
 
-              s.total_supply := abs(s.total_supply - shares);
-              s.token_a_pool := abs(s.token_a_pool - token_a_divested);
-              s.token_b_pool := abs(s.token_b_pool - token_b_divested);
+              s.total_supply := get_nat_or_fail(s.total_supply - shares_burnt, "LOW_TOTAL_SHARES");
+              s.token_a_pool := get_nat_or_fail(s.token_a_pool - token_a_divested, "LOW_POOL_A");
+              s.token_b_pool := get_nat_or_fail(s.token_b_pool - token_b_divested, "LOW_POOL_B");
 
               const receiver : address = case (Bytes.unpack(bound_data) : option(key_hash)) of [
                 | Some(h) -> Tezos.address(Tezos.implicit_account(h))
@@ -155,7 +164,7 @@ block {
 
                   const new_total_supply = s.total_supply + req_shares;
                   const token_in_ratio = new_total_supply * new_total_supply * precision / (s.total_supply * s.total_supply); // (new_supply * old_supply) ^ 2
-                  const token_amount_in_after_fee = abs(token_pool_in * token_in_ratio / precision - token_pool_in);
+                  const token_amount_in_after_fee = get_nat_or_fail(token_pool_in * token_in_ratio / precision - token_pool_in, "IMPOSSIBLE_NEW_POOL");
                   const token_amount_in = ceil_div(token_amount_in_after_fee * 10_000n, 9985n);
 
                   if s.weight = 0n then {
