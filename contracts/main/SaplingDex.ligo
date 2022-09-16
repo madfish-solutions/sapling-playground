@@ -53,26 +53,9 @@ function prepare(const prep : nat; var s : storage) : return is block {
   s.last_sender := Tezos.get_sender();
 } with ((nil : list(operation)), s)
 
-function swap(
-    const amount_in : nat;
-    var from_pool : nat;
-    var to_pool : nat
-) : (nat * nat * nat) is block {
-    const from_in_with_fee : nat = amount_in * 997n;
-    const numerator : nat = from_in_with_fee * to_pool;
-    const denominator : nat = from_pool * 1000n + from_in_with_fee;
-
-    (* calculate swapped token amount *)
-    const out : nat = numerator / denominator;
-
-    (* update pools amounts *)
-    to_pool := abs(to_pool - out);
-    from_pool := from_pool + amount_in;
-} with (out, from_pool, to_pool)
-
 function handle_sapling(const sp : sapling_params; var s : storage ) : return is 
 block {
-  require(Tezos.get_amount() = 0mutez, "Can't accept tez");
+  // require(Tezos.get_amount() = 0mutez, "Can't accept tez");
   var operations := (list [] : list(operation));
   for el in list(sp) block {
     case Tezos.sapling_verify_update(el, s.ledger) of [
@@ -82,7 +65,7 @@ block {
           if value = 0 then
             skip (* anonymous transfer case *)
           else {
-            if value > 0 then {
+            if value > 0 then { // divest
               require(
                 s.weight = 0n or s.weight = 500_000n or s.weight = 1_000_000n,
                 "INVALID_WEIGHT"
@@ -146,7 +129,7 @@ block {
                 operations := tx # operations;
               } else skip;
 
-            } else {
+            } else { // invest
               require(Tezos.get_sender() = s.last_sender, "WRONG_SENDER");
 
               const req_shares = abs(value);
@@ -162,6 +145,7 @@ block {
                 if s.weight = 500_000n then {
                   token_a_req := ceil_div(req_shares * s.token_a_pool, s.total_supply);
                   token_b_req := ceil_div(req_shares * s.token_b_pool, s.total_supply);
+
                 } else {
                   const token_pool_in = if s.weight = 0n
                     then // only token A
@@ -172,7 +156,7 @@ block {
                   const new_total_supply = s.total_supply + req_shares;
                   const token_in_ratio = new_total_supply * new_total_supply * precision / (s.total_supply * s.total_supply); // (new_supply * old_supply) ^ 2
                   const token_amount_in_after_fee = abs(token_pool_in * token_in_ratio / precision - token_pool_in);
-                  const token_amount_in = token_amount_in_after_fee * 9985n / 10_000n;
+                  const token_amount_in = ceil_div(token_amount_in_after_fee * 10_000n, 9985n);
 
                   if s.weight = 0n then {
                     token_a_req := token_amount_in;
