@@ -88,8 +88,7 @@ def get_balance():
     words = out.split(" ")
     amount_word = words[-1]
     amount_numbers = "".join(filter(str.isdigit, amount_word))
-    amount = Decimal(amount_numbers) * Decimal(1_000_000)
-    return {"account": account, "contract": contract, "balance": str(amount)}
+    return {"account": account, "contract": contract, "balance": amount_numbers}
 
 
 @post("/create_account")
